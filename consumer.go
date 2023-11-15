@@ -11,20 +11,27 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 )
 
-type Handler func(context context.Context, message *sqs.Message) error
-
-type Worker struct {
-	Config *Config
-	Input  *sqs.ReceiveMessageInput
-	Sqs    *sqs.SQS
-	Events map[string]interface{}
+type Handler interface {
+	Handle(context context.Context, message *sqs.Message) error
 }
 
-func New(config *Config, sqs *sqs.SQS) *Worker {
+type Worker struct {
+	Context     context.Context
+	Handler     Handler
+	Concurrency int
+	Config      *Config
+	Input       *sqs.ReceiveMessageInput
+	Sqs         *sqs.SQS
+	Events      map[string]interface{}
+}
+
+func New(config *Config, sqs *sqs.SQS, Concurrency int, Handler Handler) *Worker {
 	worker := &Worker{
-		Config: config,
-		Sqs:    sqs,
-		Events: make(map[string]interface{}),
+		Config:      config,
+		Sqs:         sqs,
+		Events:      make(map[string]interface{}),
+		Concurrency: Concurrency,
+		Handler:     Handler,
 	}
 
 	worker.SetConfig(*config)
@@ -147,7 +154,7 @@ func (this *Worker) On(event string, callback interface{}) {
 	this.Events[event] = callback
 }
 
-func (this *Worker) Start(context context.Context, handler Handler) {
+func (this *Worker) Start() {
 	for idle := int64(0); ; {
 		if aws.Int64Value(this.Config.Idle) > 0 && idle > aws.Int64Value(this.Config.Idle) && aws.Int64Value(this.Config.Sleep) > 0 {
 			idle = 0
@@ -175,20 +182,20 @@ func (this *Worker) Start(context context.Context, handler Handler) {
 				this.Events[EventReceiveMessage].(OnReceiveMessage)(output.Messages)
 			}
 
-			this.run(context, handler, output.Messages)
+			this.run(output.Messages)
 		} else {
 			idle++
 		}
 	}
 }
 
-func (this *Worker) Concurrent(context context.Context, handler Handler, concurrency int) {
-	for i := 0; i < concurrency; i++ {
-		go this.Start(context, handler)
+func (this *Worker) Concurrent() {
+	for i := 0; i < this.Concurrency; i++ {
+		go this.Start()
 	}
 }
 
-func (this *Worker) run(context context.Context, handler Handler, messages []*sqs.Message) {
+func (this *Worker) run(messages []*sqs.Message) {
 	var wg sync.WaitGroup
 	wg.Add(len(messages))
 
@@ -196,7 +203,7 @@ func (this *Worker) run(context context.Context, handler Handler, messages []*sq
 		go func(message *sqs.Message) {
 			defer wg.Done()
 
-			if err := this.handleMessage(context, message, handler); err != nil {
+			if err := this.handleMessage(message); err != nil {
 				log.Printf("[SQS] handleMessage error: %v", err)
 			} else {
 				if this.Events[EventProcessMessage] != nil {
@@ -209,8 +216,8 @@ func (this *Worker) run(context context.Context, handler Handler, messages []*sq
 	wg.Wait()
 }
 
-func (this *Worker) handleMessage(context context.Context, message *sqs.Message, handler Handler) error {
-	if err := handler(context, message); err != nil {
+func (this *Worker) handleMessage(message *sqs.Message) error {
+	if err := this.Handler.Handle(this.Context, message); err != nil {
 		return err
 	}
 
