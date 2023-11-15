@@ -1,4 +1,4 @@
-module github.com/haijianyang/go-sqs-consumer
+module github.com/HamletsBursarsor/go-sqs-consumer
 
 go 1.12
 
