@@ -12,7 +12,7 @@ import (
 )
 
 type Handler interface {
-	Handle(context context.Context, message *sqs.Message) error
+	Handle(message *sqs.Message) error
 }
 
 type Worker struct {
@@ -217,7 +217,7 @@ func (this *Worker) run(messages []*sqs.Message) {
 }
 
 func (this *Worker) handleMessage(message *sqs.Message) error {
-	if err := this.Handler.Handle(this.Context, message); err != nil {
+	if err := this.Handler.Handle(message); err != nil {
 		return err
 	}
 
